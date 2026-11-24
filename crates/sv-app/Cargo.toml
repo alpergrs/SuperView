@@ -1,0 +1,27 @@
+[package]
+name = "sv-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "superview"
+path = "src/main.rs"
+
+[package.metadata.winresource]
+ProductName = "SuperView"
+FileDescription = "SuperView picture viewer"
+
+[dependencies]
+sv-core = { path = "../sv-core" }
+eframe = { version = "0.37", default-features = false, features = ["glow", "persistence", "default_fonts", "x11", "wayland", "clipboard", "links"] }
+rfd = "0.15"
+interprocess = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+clipboard-win = { version = "5", features = ["std"] }
+
+[build-dependencies]
+winresource = "0.1"
