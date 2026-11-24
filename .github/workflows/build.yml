@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -39,10 +38,17 @@ jobs:
           path: target/release/superview.exe
           if-no-files-found: error
 
-      # A tag such as v0.1.0 publishes the exe as a release.
+      # A push to main publishes the exe as a release, once per version: raise the
+      # version in Cargo.toml to publish the next one.
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" target/release/superview.exe --title "SuperView $GITHUB_REF_NAME" --generate-notes
+        run: |
+          version="v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "$version is already published"
+          else
+            gh release create "$version" target/release/superview.exe --target "$GITHUB_SHA" --title "SuperView $version" --generate-notes
+          fi
