@@ -9,6 +9,7 @@ pub enum Command {
     Open,
     Next,
     Prev,
+    Random,
     First,
     Last,
     ZoomIn,
@@ -32,6 +33,8 @@ pub enum Command {
     Rename,
     Copy,
     CopyPath,
+    ShowInExplorer,
+    Refresh,
     Mark,
     MarkAll,
     ClearMarks,
@@ -55,10 +58,11 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 46] = [
+    pub const ALL: [Command; 49] = [
         Command::Open,
         Command::Next,
         Command::Prev,
+        Command::Random,
         Command::First,
         Command::Last,
         Command::ZoomIn,
@@ -82,6 +86,8 @@ impl Command {
         Command::Rename,
         Command::Copy,
         Command::CopyPath,
+        Command::ShowInExplorer,
+        Command::Refresh,
         Command::Mark,
         Command::MarkAll,
         Command::ClearMarks,
@@ -136,6 +142,7 @@ impl Command {
             Command::Open => "Open…",
             Command::Next => "Next picture",
             Command::Prev => "Previous picture",
+            Command::Random => "Random picture",
             Command::First => "First picture",
             Command::Last => "Last picture",
             Command::ZoomIn => "Zoom in",
@@ -159,6 +166,8 @@ impl Command {
             Command::Rename => "Rename…",
             Command::Copy => "Copy picture",
             Command::CopyPath => "Copy file path",
+            Command::ShowInExplorer => "Open in Explorer",
+            Command::Refresh => "Refresh",
             Command::Mark => "Mark / unmark",
             Command::MarkAll => "Mark all",
             Command::ClearMarks => "Unmark all",
@@ -188,6 +197,7 @@ impl Command {
             Command::Open => "Open",
             Command::Next => "Next",
             Command::Prev => "Prev",
+            Command::Random => "Random",
             Command::First => "First",
             Command::Last => "Last",
             Command::ZoomIn => "+",
@@ -211,6 +221,8 @@ impl Command {
             Command::Rename => "Rename",
             Command::Copy => "Copy",
             Command::CopyPath => "Copy path",
+            Command::ShowInExplorer => "Explorer",
+            Command::Refresh => "Refresh",
             Command::Mark => "Mark",
             Command::MarkAll => "Mark all",
             Command::ClearMarks => "Unmark",
@@ -280,7 +292,7 @@ pub fn default_bindings() -> Vec<Binding> {
     vec![
         ctrl(Key::O, Open),
         b(Key::ArrowRight, Next),
-        b(Key::Space, Next),
+        b(Key::Space, Random),
         b(Key::PageDown, Next),
         b(Key::ArrowLeft, Prev),
         b(Key::Backspace, Prev),
@@ -308,6 +320,8 @@ pub fn default_bindings() -> Vec<Binding> {
         b(Key::Delete, Delete),
         b(Key::F2, Rename),
         Binding { shift: true, ..ctrl(Key::C, CopyPath) },
+        ctrl(Key::Enter, ShowInExplorer),
+        b(Key::F5, Refresh),
         b(Key::M, Mark),
         b(Key::Insert, Mark),
         ctrl(Key::A, MarkAll),
@@ -351,6 +365,15 @@ pub fn from_settings(saved: &Option<Vec<KeyBinding>>) -> Vec<Binding> {
             // Commands that are newer than the saved keys get their default keys, as long
             // as the user has not given those keys to something else.
             let known: Vec<String> = list.iter().map(|k| k.command.clone()).collect();
+            // Space used to mean "next picture". Keys saved before "random picture"
+            // existed hand it over, as a fresh install has it.
+            if !known.contains(&Command::Random.id()) {
+                for b in &mut bindings {
+                    if b.key == Key::Space && !b.ctrl && !b.shift && b.command == Command::Next {
+                        b.command = Command::Random;
+                    }
+                }
+            }
             for default in default_bindings() {
                 let new_command = !known.contains(&default.command.id());
                 let key_free = !bindings.iter().any(|b| b.key == default.key && b.ctrl == default.ctrl && b.shift == default.shift);

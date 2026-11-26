@@ -58,12 +58,13 @@ Right-click anywhere for the menu; **F1** lists all keys.
 
 | Action | Keys and mouse |
 |---|---|
-| Next / previous picture | Right, Space, PageDown / Left, Backspace, PageUp |
+| Next / previous picture | Right, PageDown / Left, Backspace, PageUp |
+| A random picture | Space |
 | First / last picture | Home / End |
 | Zoom | Mouse wheel, `+`, `-` |
 | Actual size (100%) / back to fit | `1` / `0` |
 | Next fit mode | `F` |
-| Move a zoomed-in picture | Drag (Shift + drag always moves) |
+| Move a zoomed-in picture | Drag |
 | Fullscreen | F11 or middle-click |
 | Thumbnail view | Enter, double-click or Esc |
 | Rotate right / left | `R` / `L` |
@@ -76,12 +77,13 @@ Right-click anywhere for the menu; **F1** lists all keys.
 | Rename | F2 |
 | Delete to the Recycle Bin | Delete |
 | Copy the picture / copy its path / paste a picture | Ctrl+C / Ctrl+Shift+C / Ctrl+V |
+| Show the file in Explorer | Ctrl+Enter |
 | Mark / unmark | `M` or Insert |
 | Copy / move to a folder | F8 / F7 |
 | Information (metadata) | `I` |
 | Slideshow | `S` |
 | Colour picker (a click copies the HEX value) | `P` |
-| Next / previous page of a multi-page TIFF | Ctrl+PageDown / Ctrl+PageUp |
+| Next / previous page of a multi-page TIFF | Right / Left (also Ctrl+PageDown / Ctrl+PageUp) |
 | Toolbar / status bar | Tab / `B` |
 | Background behind transparent parts | `T` |
 | Open a file | Ctrl+O |
@@ -97,6 +99,9 @@ Good to know:
   fits the window is not moved; dragging selects a part of it instead (see below).
 - **Slideshow.** The time per picture, random order and looping are in the right-click menu
   and in Settings. Turning the mouse wheel stops the slideshow.
+- **Multi-page TIFF.** A book with the page number (such as 1 / 9) shows at the right.
+  The Right and Left arrows, or the arrow buttons at the bottom, turn the pages; PageDown, PageUp and the mouse wheel go to the
+  next and previous picture.
 - **Transparency.** `T` switches what shows behind transparent pictures: checkerboard,
   black, white, or the normal window background.
 - **Mouse wheel.** It zooms by default. Settings can make it go to the next and previous
@@ -123,6 +128,8 @@ as in Explorer, and a `..` tile leads to the parent folder.
 | Copy / move the marked files to a folder | F8 / F7 |
 | Delete to the Recycle Bin | Delete |
 | Copy / cut / paste files | Ctrl+C / Ctrl+X / Ctrl+V |
+| Show the selected file or folder in Explorer | Ctrl+Enter |
+| Refresh (read the folder again) | F5 |
 | Thumbnail size | Ctrl + mouse wheel, or the Size slider |
 | Search | Ctrl+F |
 
@@ -151,7 +158,7 @@ first, then each subfolder by name, each followed by its own subfolders.
 
 Drag on a picture that fits the window to select a rectangle. When the picture is zoomed in,
 dragging moves it instead; choose **Selection mode** in the right-click menu first. Drag the
-rectangle's edges to adjust it. Esc clears it.
+rectangle's edges to adjust it. Hold Shift while dragging for a square. Esc clears it.
 
 With a selection:
 
@@ -203,9 +210,11 @@ These work on the marked files, or on every picture shown when nothing is marked
 - **Batch rename** (Ctrl+R) — a pattern with `{name}`, `{n}` or `{n:3}` (a counter, here
   with three digits), `{date}` and `{time}`, with a preview of the new names. A pattern that
   would give two files the same name, or overwrite another file, is refused.
-- **Information** (`I`) — shows the camera details and lets you change the description,
-  artist, copyright and date taken, for one picture or for all marked ones. It works for
-  JPEG, PNG, WebP and TIFF. The picture is not recompressed and the file keeps its dates.
+- **Information** (`I`) — shows the dimensions, format, file size, date and folder, the
+  camera details, and the generation text (prompt and settings) that AI image generators
+  store in PNG, JPEG and WebP files, with a Copy button. It also lets you change the
+  description, artist, copyright and date taken, for one picture or for all marked ones
+  (JPEG, PNG, WebP and TIFF). The picture is not recompressed and the file keeps its dates.
 
 ## Search and duplicates
 

@@ -31,6 +31,8 @@ pub struct Info {
     pub fields: Fields,
     /// Label and value pairs such as ("Camera", "Canon EOS R6").
     pub details: Vec<(String, String)>,
+    /// Text an image generator stored in the file: the prompt and its settings.
+    pub generation: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,7 +85,7 @@ fn text_of(exif: &exif::Exif, tag: exif::Tag) -> Option<String> {
 /// Read the information stored in a picture. A picture without any gives an empty result.
 pub fn read_bytes(data: &[u8]) -> Info {
     let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(data)) else {
-        return Info { fields: read_fields_fallback(data), details: Vec::new() };
+        return Info { fields: read_fields_fallback(data), details: Vec::new(), generation: png_generation_text(data) };
     };
     let fields = Fields {
         description: text_of(&exif, exif::Tag::ImageDescription),
@@ -111,7 +113,87 @@ pub fn read_bytes(data: &[u8]) -> Info {
             details.push((label.to_string(), value));
         }
     }
-    Info { fields, details }
+    let generation = png_generation_text(data).or_else(|| user_comment(&exif).filter(|text| looks_generated(text)));
+    Info { fields, details, generation }
+}
+
+/// Text chunks of a PNG in which image generators keep the prompt and settings, most
+/// telling first.
+const GENERATION_KEYS: [&str; 8] =
+    ["parameters", "prompt", "Comment", "Description", "invokeai_metadata", "sd-metadata", "Dream", "workflow"];
+
+/// The generation text of a PNG, or `None` for other files and PNGs without any.
+fn png_generation_text(data: &[u8]) -> Option<String> {
+    if Format::from_magic(data) != Some(Format::Png) {
+        return None;
+    }
+    let reader = png::Decoder::new(Cursor::new(data)).read_info().ok()?;
+    let info = reader.info();
+    let mut found: Vec<(String, String)> = Vec::new();
+    for chunk in &info.uncompressed_latin1_text {
+        found.push((chunk.keyword.clone(), chunk.text.clone()));
+    }
+    for chunk in &info.compressed_latin1_text {
+        if let Ok(text) = chunk.get_text() {
+            found.push((chunk.keyword.clone(), text));
+        }
+    }
+    for chunk in &info.utf8_text {
+        if let Ok(text) = chunk.get_text() {
+            found.push((chunk.keyword.clone(), text));
+        }
+    }
+    let mut parts = Vec::new();
+    for key in GENERATION_KEYS {
+        for (keyword, text) in &found {
+            let text = text.trim();
+            // "Comment" and "Description" are ordinary PNG fields too.
+            let ordinary = matches!(key, "Comment" | "Description") && !looks_generated(text);
+            if keyword == key && !text.is_empty() && !ordinary {
+                // One block is shown bare; several get their names as headings.
+                parts.push((key, text.to_string()));
+            }
+        }
+    }
+    match parts.len() {
+        0 => None,
+        1 => Some(parts.remove(0).1),
+        _ => Some(parts.iter().map(|(key, text)| format!("[{key}]\n{text}")).collect::<Vec<_>>().join("\n\n")),
+    }
+}
+
+/// Whether a free-text comment reads like the settings of an image generator.
+fn looks_generated(text: &str) -> bool {
+    ["Steps:", "Sampler:", "Negative prompt:", "CFG scale:", "\"prompt\"", "\"sampler", "\"seed\"", "\"steps\""].iter().any(|mark| text.contains(mark))
+}
+
+/// The EXIF user comment, where generators put their text in JPEG and WebP files.
+fn user_comment(exif: &exif::Exif) -> Option<String> {
+    let field = exif.get_field(exif::Tag::UserComment, exif::In::PRIMARY)?;
+    let text = match &field.value {
+        exif::Value::Undefined(bytes, _) => decode_user_comment(bytes),
+        exif::Value::Ascii(parts) => parts.iter().map(|p| String::from_utf8_lossy(p).into_owned()).collect::<Vec<_>>().join(" "),
+        _ => return None,
+    };
+    let text = text.trim().trim_end_matches('\0').trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// A user comment starts with eight bytes naming its character set.
+fn decode_user_comment(bytes: &[u8]) -> String {
+    let (code, body) = if bytes.len() >= 8 { bytes.split_at(8) } else { (&[][..], bytes) };
+    if code.starts_with(b"UNICODE") {
+        // UTF-16 without a set byte order: in Latin text the zero bytes show which it is.
+        let zeros = |offset: usize| body.iter().skip(offset).step_by(2).filter(|b| **b == 0).count();
+        let big_endian = zeros(0) >= zeros(1);
+        let units: Vec<u16> = body
+            .chunks_exact(2)
+            .map(|pair| if big_endian { u16::from_be_bytes([pair[0], pair[1]]) } else { u16::from_le_bytes([pair[0], pair[1]]) })
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(body).into_owned()
+    }
 }
 
 /// A second reader for files the first one finds nothing in. In PNGs the information can

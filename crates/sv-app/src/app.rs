@@ -734,7 +734,7 @@ impl App {
         // Unsaved edits are never thrown away by moving on.
         let leaves_picture = matches!(
             command,
-            Command::Next | Command::Prev | Command::First | Command::Last | Command::Open | Command::Delete | Command::Rename
+            Command::Next | Command::Prev | Command::Random | Command::First | Command::Last | Command::Open | Command::Delete | Command::Rename
                 | Command::Slideshow | Command::NextPage | Command::PrevPage
         ) || (command == Command::Browser && !self.editor.has_selection())
             || matches!(command, Command::Batch | Command::BatchRename | Command::Info | Command::Search | Command::Duplicates);
@@ -801,6 +801,14 @@ impl App {
             }
             Command::Next => self.step_by_user(1, now),
             Command::Prev => self.step_by_user(-1, now),
+            Command::Random => {
+                // Any picture but the current one.
+                let n = self.entries.len();
+                if n > 1 {
+                    let pick = (self.random() % (n as u64 - 1)) as usize;
+                    self.go_to(if pick >= self.index { pick + 1 } else { pick });
+                }
+            }
             Command::First => {
                 self.edge = None;
                 self.go_to(0);
@@ -840,6 +848,27 @@ impl App {
             }
             Command::MarkAll => self.marked = self.entries.iter().map(|e| e.path.clone()).collect(),
             Command::ClearMarks => self.marked.clear(),
+            Command::ShowInExplorer => {
+                // A selected folder tile, else the picture, else the folder being shown.
+                let folder = self.grid.folder_selected.filter(|_| self.mode == Mode::Browser);
+                let folder = folder.and_then(|i| self.grid_folders().into_iter().nth(i)).map(|(path, _)| path);
+                let file = self.current_path().filter(|_| self.pasted.is_none()).cloned();
+                if let Some(path) = folder.or(file).or_else(|| self.dir.clone()) {
+                    if let Err(e) = show_in_file_manager(&path) {
+                        self.say(format!("Could not open Explorer: {e}"), now);
+                    }
+                }
+            }
+            Command::Refresh => {
+                // Read the folder, the folder tree and the pictures again from disk.
+                self.tree.refresh();
+                self.thumbs.forget_all();
+                if let Some(path) = self.current_path().cloned() {
+                    self.loader.forget(&path);
+                }
+                self.relist = true;
+                self.say("Refreshed".to_string(), now);
+            }
             Command::CopyTo => self.send_to_folder(false, now),
             Command::MoveTo => self.send_to_folder(true, now),
             Command::Toolbar => {
@@ -1080,7 +1109,15 @@ impl App {
                 egui::Event::Key { key, pressed: true, repeat, modifiers, .. } if !typing => {
                     let ctrl = modifiers.ctrl || modifiers.command;
                     if let Some(c) = input::lookup(&self.bindings, *key, ctrl, modifiers.shift, modifiers.alt, *repeat) {
-                        commands.push(c);
+                        // In a file with several pages the left and right arrows turn its
+                        // pages. PageUp, PageDown and the wheel still change the picture.
+                        let pages = self.shown.as_ref().map_or(1, |s| s.ready.loaded.page_count);
+                        let paged = self.mode == Mode::Viewer && pages > 1 && self.pasted.is_none();
+                        commands.push(match (c, *key) {
+                            (Command::Next, egui::Key::ArrowRight) if paged => Command::NextPage,
+                            (Command::Prev, egui::Key::ArrowLeft) if paged => Command::PrevPage,
+                            _ => c,
+                        });
                     }
                 }
                 egui::Event::Copy if !typing => commands.push(Command::Copy),
@@ -1203,6 +1240,7 @@ impl App {
         }
         if has_file {
             item(ui, Command::CopyPath);
+            item(ui, Command::ShowInExplorer);
             item(ui, Command::Rename);
             item(ui, Command::Delete);
             item(ui, Command::Mark);
@@ -1486,11 +1524,10 @@ impl App {
             // What a drag does. A picture larger than the window (zoomed in) is moved by
             // dragging. One that fits is selected by dragging. Once selection mode is on
             // (right-click > Selection mode) or a rectangle is on screen, drags select or
-            // adjust it even when zoomed in. Shift + drag always moves the picture.
+            // adjust it even when zoomed in. Shift held while selecting makes the rectangle a square.
             let size_now = shown_px * zoom_now(&self.view) / ppp;
             let pannable = size_now.x > canvas.width() + 1.0 || size_now.y > canvas.height() + 1.0;
-            let shift = ctx.input(|i| i.modifiers.shift);
-            let panning = shift || (pannable && !self.editor.crop_active());
+            let panning = pannable && !self.editor.crop_active();
             if response.drag_started_by(egui::PointerButton::Primary) && !panning && !self.editor.is_busy() {
                 self.editor.begin_selection();
             }
@@ -1551,6 +1588,13 @@ impl App {
             }
             if self.current_path().is_some_and(|p| self.marked.contains(p)) && self.pasted.is_none() {
                 badge(&painter, canvas.right_top() + vec2(-10.0, 10.0), Align2::RIGHT_TOP, "Marked");
+            }
+
+            if loaded.page_count > 1 && self.pasted.is_none() {
+                page_badge(&painter, canvas, loaded.page + 1, loaded.page_count);
+                if let Some(command) = page_bar(ui, canvas, loaded.page + 1, loaded.page_count) {
+                    commands.push(command);
+                }
             }
 
             // Animation playback.
@@ -1923,10 +1967,20 @@ fn apply_theme(ctx: &egui::Context, theme: Theme) {
 /// How far past its edge a zoomed-in picture can be dragged, in points.
 const DRAG_OVERSHOOT: f32 = 100.0;
 
-/// Open a folder in the system's file manager (Explorer on Windows).
+/// Show `path` in the system's file manager (Explorer on Windows): a folder is opened, a
+/// file is shown selected in its folder.
 fn show_in_file_manager(path: &Path) -> std::io::Result<()> {
-    let program = if cfg!(windows) { "explorer.exe" } else { "xdg-open" };
-    std::process::Command::new(program).arg(path).spawn().map(|_| ())
+    let mut command = std::process::Command::new(if cfg!(windows) { "explorer.exe" } else { "xdg-open" });
+    if path.is_dir() {
+        command.arg(path);
+    } else if cfg!(windows) {
+        // Explorer wants "/select," and the path as one argument, quoted only around the path.
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::raw_arg(&mut command, format!("/select,\"{}\"", path.display()));
+    } else {
+        command.arg(path.parent().unwrap_or(path));
+    }
+    command.spawn().map(|_| ())
 }
 
 /// Right-click menus are drawn half as large again as ordinary text, for easier reading.
@@ -1973,6 +2027,91 @@ fn badge(painter: &egui::Painter, pos: egui::Pos2, anchor: Align2, text: &str) {
     let rect = anchor.anchor_size(pos, galley.size());
     painter.rect_filled(rect.expand2(vec2(7.0, 4.0)), 4.0, Color32::from_black_alpha(190));
     painter.galley(rect.min, galley, Color32::WHITE);
+}
+
+/// A book with the page number under it, at the right edge of the picture area: the sign
+/// of a file with several pages.
+fn page_badge(painter: &egui::Painter, canvas: Rect, page: usize, count: usize) {
+    let book = vec2(72.0, 56.0);
+    let text = format!("{page} / {count}");
+    let galley = painter.layout_no_wrap(text, FontId::proportional(20.0), Color32::WHITE);
+    let plate = Rect::from_center_size(
+        egui::pos2(canvas.right() - 16.0 - (book.x + 28.0) / 2.0, canvas.center().y),
+        vec2(book.x.max(galley.size().x) + 28.0, book.y + galley.size().y + 34.0),
+    );
+    painter.rect_filled(plate, 10.0, Color32::from_black_alpha(170));
+
+    // An open book: two pages meeting at the spine, with a few lines of text.
+    let area = Rect::from_min_size(egui::pos2(plate.center().x - book.x / 2.0, plate.top() + 12.0), book);
+    let stroke = egui::Stroke::new(2.5, Color32::WHITE);
+    let spine = area.center().x;
+    let (top, bottom, dip) = (area.top() + 6.0, area.bottom() - 2.0, 7.0);
+    for side in [-1.0_f32, 1.0] {
+        let outer = spine + side * book.x / 2.0;
+        let page = vec![
+            egui::pos2(spine, top + dip),
+            egui::pos2(spine + side * book.x * 0.25, top),
+            egui::pos2(outer, top + 2.0),
+            egui::pos2(outer, bottom - dip + 2.0),
+            egui::pos2(spine + side * book.x * 0.25, bottom - dip),
+            egui::pos2(spine, bottom),
+        ];
+        painter.add(egui::Shape::closed_line(page, stroke));
+        for row in 0..3 {
+            let y = top + 15.0 + row as f32 * 9.0;
+            let thin = egui::Stroke::new(1.5, Color32::from_white_alpha(170));
+            painter.line_segment([egui::pos2(spine + side * 8.0, y + 2.0), egui::pos2(outer - side * 7.0, y)], thin);
+        }
+    }
+    painter.galley(egui::pos2(plate.center().x - galley.size().x / 2.0, area.bottom() + 10.0), galley, Color32::WHITE);
+}
+
+/// Previous page, the page number and next page, at the bottom of the picture area of a
+/// file with several pages. Returns the command of the arrow that was clicked.
+fn page_bar(ui: &egui::Ui, canvas: Rect, page: usize, count: usize) -> Option<Command> {
+    const MARGIN: f32 = 15.0;
+    const BUTTON: f32 = 46.0;
+    let painter = ui.painter_at(canvas);
+    let galley = painter.layout_no_wrap(format!("{page} / {count}"), FontId::proportional(22.0), Color32::WHITE);
+    let gap = 22.0;
+    let size = vec2(BUTTON * 2.0 + galley.size().x + gap * 2.0 + MARGIN * 2.0, BUTTON + MARGIN * 2.0);
+    let plate = Rect::from_center_size(egui::pos2(canvas.center().x, canvas.bottom() - MARGIN - size.y / 2.0), size);
+    painter.rect_filled(plate, size.y / 2.0, Color32::from_black_alpha(185));
+    painter.galley(plate.center() - galley.size() / 2.0, galley, Color32::WHITE);
+
+    let mut clicked = None;
+    let sides = [(-1.0_f32, Command::PrevPage, page > 1, "Previous page"), (1.0, Command::NextPage, page < count, "Next page")];
+    for (side, command, enabled, tip) in sides {
+        let centre = egui::pos2(plate.center().x + side * (plate.width() / 2.0 - MARGIN - BUTTON / 2.0), plate.center().y);
+        let rect = Rect::from_center_size(centre, vec2(BUTTON, BUTTON));
+        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let response = ui.interact(rect, ui.scope_id().with(("page_bar", command.id())), sense);
+        let hovered = enabled && response.hovered();
+        let ink = if enabled { Color32::WHITE } else { Color32::from_white_alpha(70) };
+        let fill = if hovered { Color32::from_white_alpha(70) } else { Color32::from_white_alpha(26) };
+        painter.circle_filled(centre, BUTTON / 2.0, fill);
+        painter.circle_stroke(centre, BUTTON / 2.0, egui::Stroke::new(1.5, Color32::from_white_alpha(if enabled { 150 } else { 50 })));
+        // An arrow: a shaft and a head with round joints.
+        let stroke = egui::Stroke::new(3.0, ink);
+        let (tip_x, tail_x, head) = (centre.x + side * 11.0, centre.x - side * 11.0, 9.0);
+        painter.line_segment([egui::pos2(tail_x, centre.y), egui::pos2(tip_x, centre.y)], stroke);
+        let head_points = vec![
+            egui::pos2(tip_x - side * head, centre.y - head),
+            egui::pos2(tip_x, centre.y),
+            egui::pos2(tip_x - side * head, centre.y + head),
+        ];
+        painter.add(egui::Shape::line(head_points, stroke));
+        for point in [egui::pos2(tail_x, centre.y), egui::pos2(tip_x, centre.y)] {
+            painter.circle_filled(point, 1.5, ink);
+        }
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.on_hover_text(tip).clicked() {
+            clicked = Some(command);
+        }
+    }
+    clicked
 }
 
 fn file_name(path: &Path) -> String {

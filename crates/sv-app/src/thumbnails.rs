@@ -151,6 +151,12 @@ impl ThumbLoader {
         self.shared.cache.as_ref().map_or(0, |c| c.remove_small(threshold))
     }
 
+    /// Drop every thumbnail held in memory, so each is read again when next shown. Those
+    /// kept on disk are reused when their picture has not changed.
+    pub fn forget_all(&mut self) {
+        self.slots.clear();
+    }
+
     pub fn forget(&mut self, path: &Path) {
         self.slots.remove(path);
     }

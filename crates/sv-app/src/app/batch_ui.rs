@@ -382,9 +382,38 @@ impl App {
         let writable = |path: &PathBuf| sv_core::decode::Format::from_extension(path).is_some_and(metadata::can_write);
         let can_write = !targets.is_empty() && targets.iter().all(writable);
 
+        // What the file system and the decoded picture say about a single file.
+        let mut facts: Vec<(&str, String)> = Vec::new();
+        if let Some(path) = &single {
+            let shown = self.shown.as_ref().filter(|s| s.key.as_ref().is_some_and(|k| &k.0 == path));
+            if let Some(shown) = shown {
+                let loaded = &shown.ready.loaded;
+                let (w, h) = (loaded.width(), loaded.height());
+                let megapixels = w as f64 * h as f64 / 1_000_000.0;
+                facts.push(("Dimensions", format!("{w} × {h} pixels   ({megapixels:.1} MP)")));
+                facts.push(("Format", loaded.format.name().to_string()));
+                if loaded.page_count > 1 {
+                    facts.push(("Pages", loaded.page_count.to_string()));
+                }
+                if loaded.is_animated() {
+                    facts.push(("Frames", loaded.frames.len().to_string()));
+                }
+            } else if let Some(format) = sv_core::decode::Format::from_extension(path) {
+                facts.push(("Format", format.name().to_string()));
+            }
+            if let Some(entry) = self.entries.iter().find(|e| &e.path == path) {
+                facts.push(("File size", format!("{}   ({} bytes)", human_size(entry.size), entry.size)));
+                facts.push(("Modified", date_text(entry.modified)));
+            }
+            if let Some(folder) = path.parent() {
+                facts.push(("Folder", folder.display().to_string()));
+            }
+        }
+
         let mut open = true;
         let mut save = false;
-        egui::Window::new("Information").open(&mut open).collapsible(false).resizable(false).default_width(420.0).show(ctx, |ui| {
+        let mut copied = false;
+        egui::Window::new("Information").open(&mut open).collapsible(false).resizable(false).default_width(460.0).show(ctx, |ui| {
             let b = &mut self.batch;
             match &single {
                 Some(path) => {
@@ -399,13 +428,30 @@ impl App {
                     ui.weak("Tick the fields to write to all of them.");
                 }
             }
-            if single.is_some() && !b.info.details.is_empty() {
+            if single.is_some() && (!facts.is_empty() || !b.info.details.is_empty()) {
                 egui::Grid::new("info_details").num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
-                    for (label, value) in &b.info.details {
+                    let details = b.info.details.iter().map(|(label, value)| (label.as_str(), value));
+                    for (label, value) in facts.iter().map(|(label, value)| (*label, value)).chain(details) {
                         ui.weak(label);
-                        ui.label(value);
+                        // The text can be selected with the mouse and copied.
+                        ui.add(egui::Label::new(value).wrap().selectable(true));
                         ui.end_row();
                     }
+                });
+            }
+            if let Some(text) = b.info.generation.as_ref().filter(|_| single.is_some()) {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.strong("Generation text");
+                    if ui.button("Copy").on_hover_text("Copy all of it to the clipboard").clicked() {
+                        ui.ctx().copy_text(text.clone());
+                        copied = true;
+                    }
+                });
+                egui::ScrollArea::vertical().id_salt("generation").max_height(200.0).show(ui, |ui| {
+                    // Read-only, but the text can still be selected and copied in part.
+                    let mut shown = text.as_str();
+                    ui.add(egui::TextEdit::multiline(&mut shown).desired_width(f32::INFINITY).desired_rows(4));
                 });
             }
             ui.separator();
@@ -440,6 +486,9 @@ impl App {
             }
         });
 
+        if copied {
+            self.say("Generation text copied".to_string(), now);
+        }
         if save {
             let b = &self.batch;
             let many = single.is_none();

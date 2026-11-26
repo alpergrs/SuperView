@@ -334,7 +334,9 @@ impl State {
         if self.tool != Tool::Crop || rect.width() <= 0.0 {
             return;
         }
-        // While Shift moves the picture, the frame only follows along.
+        // Shift held while dragging makes the frame a square.
+        let square = response.ctx.input(|i| i.modifiers.shift);
+        // While a drag moves the picture, the frame only follows along.
         let response = &if panning { response.clone().interact(Sense::hover()) } else { response.clone() };
         let scale = rect.width() / width as f32;
         let to_screen = |x: f32, y: f32| rect.min + vec2(x, y) * scale;
@@ -387,7 +389,29 @@ impl State {
                         if bottom {
                             self.crop[3] = py.max(self.crop[1] + 8.0);
                         }
-                        if let Some(ratio) = self.crop_aspect.ratio(width, height) {
+                        if square {
+                            // Shift held: a square, growing from the corner or edge that
+                            // stays put, and no larger than the room the picture leaves.
+                            let (w, h) = (self.crop[2] - self.crop[0], self.crop[3] - self.crop[1]);
+                            let side = match (left || right, top || bottom) {
+                                (true, true) => w.max(h),
+                                (true, false) => w,
+                                _ => h,
+                            };
+                            let room_x = if left { self.crop[2] } else { width as f32 - self.crop[0] };
+                            let room_y = if top { self.crop[3] } else { height as f32 - self.crop[1] };
+                            let side = side.min(room_x).min(room_y).max(1.0);
+                            if left {
+                                self.crop[0] = self.crop[2] - side;
+                            } else {
+                                self.crop[2] = self.crop[0] + side;
+                            }
+                            if top {
+                                self.crop[1] = self.crop[3] - side;
+                            } else {
+                                self.crop[3] = self.crop[1] + side;
+                            }
+                        } else if let Some(ratio) = self.crop_aspect.ratio(width, height) {
                             // Width leads when a side edge moves, height when only top or bottom does.
                             if left || right {
                                 let h = (self.crop[2] - self.crop[0]) / ratio;

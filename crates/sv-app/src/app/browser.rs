@@ -28,7 +28,7 @@ fn folder_menu(ui: &mut egui::Ui, own: bool) -> Option<FolderAction> {
         }
     };
     item(ui, "Open", "", FolderAction::Open);
-    item(ui, "Open in Explorer", "", FolderAction::OpenInExplorer);
+    item(ui, "Open in Explorer", "Ctrl+Enter", FolderAction::OpenInExplorer);
     item(ui, "Slideshow", "", FolderAction::Slideshow { subfolders: false });
     item(ui, "Slideshow with subfolders", "", FolderAction::Slideshow { subfolders: true });
     ui.separator();

@@ -320,3 +320,30 @@ fn rename_never_overwrites_a_bystander_but_can_swap_names() {
     assert_eq!(std::fs::read(d.path().join("pic_6.jpg")).unwrap(), b"a.jpg");
     assert_eq!(std::fs::read(d.path().join("pic_7.jpg")).unwrap(), b"b.jpg");
 }
+
+fn png_with_text(chunks: &[(&str, &str)]) -> Vec<u8> {
+    let mut data = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut data, 2, 2);
+        encoder.set_color(png::ColorType::Rgb);
+        for (keyword, text) in chunks {
+            encoder.add_text_chunk(keyword.to_string(), text.to_string()).unwrap();
+        }
+        encoder.write_header().unwrap().write_image_data(&[0; 12]).unwrap();
+    }
+    data
+}
+
+#[test]
+fn generation_text_is_read_from_png_text_chunks() {
+    let settings = "a red fox in the snow\nNegative prompt: blurry\nSteps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1";
+    let info = metadata::read_bytes(&png_with_text(&[("parameters", settings)]));
+    assert_eq!(info.generation.as_deref(), Some(settings));
+
+    // Two blocks get their names as headings; an ordinary comment is not generation text.
+    let both = metadata::read_bytes(&png_with_text(&[("workflow", "{\"nodes\":[]}"), ("prompt", "{\"3\":{}}"), ("Comment", "holiday")]));
+    assert_eq!(both.generation.as_deref(), Some("[prompt]\n{\"3\":{}}\n\n[workflow]\n{\"nodes\":[]}"));
+
+    assert_eq!(metadata::read_bytes(&png_with_text(&[("Comment", "holiday")])).generation, None);
+    assert_eq!(metadata::read_bytes(&png_with_text(&[])).generation, None);
+}
